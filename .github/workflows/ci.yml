@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test
+
+      - name: Deploy to develop-builds
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Configure remote to use GITHUB_TOKEN
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+
+          # Backup dist directory
+          rm -rf /tmp/dist
+          mkdir -p /tmp/dist
+          cp -r dist/* /tmp/dist/
+
+          # Fetch all branches
+          git fetch origin
+
+          # Checkout or create develop-builds based on develop
+          if git show-ref --verify --quiet refs/remotes/origin/develop-builds; then
+            git checkout develop-builds
+            git pull origin develop-builds
+          else
+            git checkout -b develop-builds origin/develop
+          fi
+
+          # Sync code with develop
+          git merge origin/develop --no-edit
+
+          # Replace dist directory
+          rm -rf dist
+          mkdir -p dist
+          cp -r /tmp/dist/* dist/
+
+          # Force add dist directory (ignore .gitignore)
+          git add -f dist
+
+          # Commit if changed
+          git commit -m "chore: update build artifacts from develop" || echo "No changes"
+
+          # Push
+          git push origin develop-builds
